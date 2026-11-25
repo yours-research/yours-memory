@@ -1,0 +1,60 @@
+{
+  "name": "@yours/memory",
+  "version": "0.1.0",
+  "description": "100% local hybrid memory engine for Chrome Manifest V3 and Web Apps: OPFS SQLite-WASM + FTS5 + quantized HNSW vector indexing in a Dedicated Web Worker with IndexedDB fallback.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./worker": {
+      "types": "./dist/worker/index.d.ts",
+      "import": "./dist/worker/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "chrome-extension",
+    "manifest-v3",
+    "local-ai",
+    "hybrid-search",
+    "hnsw",
+    "bm25",
+    "sqlite-wasm",
+    "opfs",
+    "indexeddb",
+    "web-worker",
+    "memory",
+    "yours-research"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yours-research/yours-memory.git"
+  },
+  "homepage": "https://yours.sh",
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.4"
+  }
+}
