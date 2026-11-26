@@ -84,6 +84,20 @@ const BUILTIN_RULES: Array<Omit<BlockedDomainRule, 'createdAt'>> = [
     builtin: true,
   },
   {
+    id: 'builtin_banking_host_keywords',
+    pattern: '(^|\\.)([a-z0-9-]*chasebank[a-z0-9-]*|[a-z0-9-]*banking[a-z0-9-]*|onlinebanking|mybank)\\.',
+    kind: 'regex',
+    reason: 'Banking and financial portals are excluded from automatic capture',
+    builtin: true,
+  },
+  {
+    id: 'builtin_sensitive_financial_tax_paths',
+    pattern: '^https?://[^/]+/(accounts/(checking|savings)|banking|billing/cards|tax-forms?|w-?2|payroll|credentials)([/?#]|$)',
+    kind: 'regex',
+    reason: 'Sensitive banking, payroll, tax, and credential URL paths are blocked',
+    builtin: true,
+  },
+  {
     id: 'builtin_generic_auth_bank_subdomains',
     pattern: '^(auth|signin|login|sso|oauth|bank|banking|onlinebanking|vault|checkout)\\.',
     kind: 'regex',
@@ -230,4 +244,49 @@ export class SensitiveDomainFilter {
     }
     return { blocked: false };
   }
+}
+
+interface ContentPolicyRule {
+  pattern: string;
+  regex: RegExp;
+  reason: string;
+}
+
+const SENSITIVE_CONTENT_RULES: ContentPolicyRule[] = [
+  {
+    pattern: 'content:ssn',
+    regex: /\b\d{3}-\d{2}-\d{4}\b/,
+    reason: 'Content appears to contain a US Social Security Number (SSN)',
+  },
+  {
+    pattern: 'content:banking_account',
+    regex: /\b(?:routing\s*(?:number|num|no|#)?\s*[:#=-]?\s*\d{9}|(?:checking|savings)\s+account\s+balance|iban\s*[:#]?\s*[a-z]{2}\d{2}[a-z0-9]{11,})\b/i,
+    reason: 'Content appears to contain sensitive bank account or routing details',
+  },
+  {
+    pattern: 'content:credential_token',
+    regex: /(?:-----BEGIN (?:[A-Z0-9 ]* )?PRIVATE KEY-----|\b(?:secret_live_|sk_live_|rk_live_|pk_live_|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16})|\b(?:access_token|refresh_token|id_token|client_secret|api_key)\s*[:=]\s*['"]?[A-Za-z0-9._-]{8,})/i,
+    reason: 'Content appears to contain an API token, secret key, or OAuth credential',
+  },
+  {
+    pattern: 'content:password_secret',
+    regex: /\b(?:(?:recovery|master|backup)\s+password(?:\s+hint)?|password\s*[:=]\s*\S{4,})\b/i,
+    reason: 'Content appears to contain sensitive password or recovery information',
+  },
+];
+
+export function checkSensitiveContent(content?: string): DomainBlockCheck {
+  if (!content || !content.trim()) {
+    return { blocked: false };
+  }
+  for (const rule of SENSITIVE_CONTENT_RULES) {
+    if (rule.regex.test(content)) {
+      return {
+        blocked: true,
+        reason: rule.reason,
+        rule: rule.pattern,
+      };
+    }
+  }
+  return { blocked: false };
 }
