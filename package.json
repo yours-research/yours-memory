@@ -28,6 +28,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
