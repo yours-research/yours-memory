@@ -105,6 +105,8 @@ export interface RememberOptions {
   skipContradictionCheck?: boolean;
   /** Explicit timestamp override (ms since epoch) for deterministic tests. */
   nowMs?: number;
+  /** Defer persisting `saveIndexSnapshot` during batched writes. */
+  deferIndexSave?: boolean;
 }
 
 export interface InspectOptions {

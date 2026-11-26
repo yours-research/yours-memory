@@ -334,7 +334,9 @@ export class HybridMemoryEngine implements MemoryProvider {
       });
     }
 
-    await storage.saveIndexSnapshot('hnsw', this.hnsw.serialize());
+    if (!options.deferIndexSave) {
+      await storage.saveIndexSnapshot('hnsw', this.hnsw.serialize());
+    }
     return newRecord;
   }
 
@@ -415,7 +417,7 @@ export class HybridMemoryEngine implements MemoryProvider {
     for (const fact of plan.profileFacts) {
       const beforeActive = await storage.listRecords({ tier: 'profile', includeSuperseded: false });
       const activeIdsBefore = new Set(beforeActive.map((r) => r.id));
-      const res = await this.remember(fact);
+      const res = await this.remember(fact, { deferIndexSave: true });
       if (!activeIdsBefore.has(res.id)) {
         added++;
         createdProfileIds.push(res.id);
@@ -437,7 +439,7 @@ export class HybridMemoryEngine implements MemoryProvider {
           ...plan.episodicSummary,
           supersedesId: prevSummary?.id,
         },
-        { skipDeduplication: Boolean(prevSummary) }
+        { skipDeduplication: Boolean(prevSummary), deferIndexSave: true }
       );
       if (!existingEpisodic.some((e) => e.id === summaryRecord.id)) {
         added++;
@@ -455,6 +457,10 @@ export class HybridMemoryEngine implements MemoryProvider {
           createdAt: Date.now(),
         });
       }
+    }
+
+    if (added > 0 || superseded > 0) {
+      await storage.saveIndexSnapshot('hnsw', this.hnsw.serialize());
     }
 
     return { added, superseded };

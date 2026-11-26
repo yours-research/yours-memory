@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { HarnessMessage } from '../src/contracts.js';
 import { HybridMemoryEngine, InMemoryStorageBackend } from '../src/index.js';
 
@@ -124,5 +124,104 @@ describe('Lifecycle: deduplication, contradiction superseding & consolidation', 
     const episodic = await engine.inspect({ tier: 'episodic' });
     expect(episodic).toHaveLength(1);
     expect(episodic[0]?.tainted).toBe(true);
+  });
+
+  it('defers HNSW index snapshot persistence when deferIndexSave is enabled', async () => {
+    const storage = new InMemoryStorageBackend();
+    const engine = new HybridMemoryEngine({ storage });
+    await engine.init();
+
+    const saveSpy = vi.spyOn(storage, 'saveIndexSnapshot');
+
+    const deferred = await engine.remember(
+      { tier: 'profile', content: 'My preferred shell is zsh.' },
+      { deferIndexSave: true, nowMs: 1000 }
+    );
+    expect(saveSpy).toHaveBeenCalledTimes(0);
+
+    // Record is still immediately searchable in the in-memory HNSW index
+    const hits = await engine.recall({ query: 'preferred shell zsh', tiers: ['profile'], nowMs: 1001 });
+    expect(hits[0]?.record.id).toBe(deferred.id);
+
+    await engine.remember(
+      { tier: 'profile', content: 'My preferred terminal is Ghostty.' },
+      { nowMs: 1002 }
+    );
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('batches HNSW index snapshot serialization during consolidate() and skips save when unchanged', async () => {
+    const storage = new InMemoryStorageBackend();
+    const engine = new HybridMemoryEngine({ storage });
+    await engine.init();
+
+    const saveSpy = vi.spyOn(storage, 'saveIndexSnapshot');
+
+    // Empty or non-consolidatable messages add/supersede nothing and must not save a snapshot
+    const emptyResult = await engine.consolidate('thread_empty', [
+      { id: 's1', role: 'system', content: 'System prompt only', createdAt: 900 },
+      { id: 'u0', role: 'user', content: '   ', createdAt: 901 },
+    ]);
+    expect(emptyResult).toEqual({ added: 0, superseded: 0 });
+    expect(saveSpy).toHaveBeenCalledTimes(0);
+
+    // Multiple profile facts + episodic summary should persist the HNSW snapshot at most once
+    const messages: HarnessMessage[] = [
+      {
+        id: 'm1',
+        role: 'user',
+        content: 'My favorite editor is Neovim.',
+        createdAt: 1000,
+      },
+      {
+        id: 'm2',
+        role: 'user',
+        content: 'I always use pnpm for workspace builds.',
+        createdAt: 1001,
+      },
+      {
+        id: 'm3',
+        role: 'user',
+        content: 'My preferred timezone is America/New_York.',
+        createdAt: 1002,
+      },
+      {
+        id: 'm4',
+        role: 'assistant',
+        content: 'Got it — Neovim, pnpm, and America/New_York noted.',
+        createdAt: 1003,
+      },
+    ];
+
+    const firstResult = await engine.consolidate('thread_batch', messages);
+    expect(firstResult).toEqual({ added: 4, superseded: 0 });
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy).toHaveBeenCalledWith('hnsw', expect.any(Uint8Array));
+
+    // Confirm the single snapshot restores all consolidated records on a fresh engine
+    const loadSpy = vi.spyOn(storage, 'loadIndexSnapshot');
+    saveSpy.mockClear();
+    const reloaded = new HybridMemoryEngine({ storage });
+    await reloaded.init();
+    expect(loadSpy).toHaveBeenCalledWith('hnsw');
+    expect(saveSpy).toHaveBeenCalledTimes(0);
+
+    const recalledEditor = await reloaded.recall({ query: 'favorite editor Neovim', tiers: ['profile'] });
+    expect(recalledEditor.some((h) => h.record.content.includes('Neovim'))).toBe(true);
+    const recalledSummary = await reloaded.recall({ query: 'thread_batch summary', tiers: ['episodic'] });
+    expect(recalledSummary).toHaveLength(1);
+
+    // Follow-up consolidation superseding both a profile fact and prior episodic summary saves once
+    saveSpy.mockClear();
+    const updateResult = await engine.consolidate('thread_batch', [
+      {
+        id: 'm5',
+        role: 'user',
+        content: 'My favorite editor is Helix.',
+        createdAt: 2000,
+      },
+    ]);
+    expect(updateResult).toEqual({ added: 2, superseded: 2 });
+    expect(saveSpy).toHaveBeenCalledTimes(1);
   });
 });
