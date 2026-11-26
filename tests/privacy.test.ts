@@ -130,4 +130,71 @@ describe('Privacy: sensitive-domain blocklist, taint guard, AES-GCM export/impor
     expect((await engine2.getStats()).vectorCount).toBe(0);
     expect(engine2.isUrlBlocked('https://secret.example.net/dashboard').blocked).toBe(false);
   });
+
+  it('blocks banking subdomains, sensitive financial/tax paths, and PII/credential content', async () => {
+    const engine = new HybridMemoryEngine({ storage: new InMemoryStorageBackend() });
+    await engine.init();
+
+    const blockedInputs = [
+      {
+        tier: 'document' as const,
+        content: 'Checking account balance $14,820.55 routing number 021000021.',
+        sourceUrl: 'https://online.chasebank.example.com/accounts/checking',
+      },
+      {
+        tier: 'document' as const,
+        content: 'Employee SSN 123-45-6789 filed for W-2.',
+        sourceUrl: 'https://hr.example.org/tax-forms',
+      },
+      {
+        tier: 'working' as const,
+        content: 'access_token=secret_live_abc123456789 should never persist',
+      },
+      {
+        tier: 'episodic' as const,
+        content: 'User entered recovery password hint during sign-in.',
+      },
+    ];
+
+    for (const input of blockedInputs) {
+      await expect(engine.remember(input)).rejects.toBeInstanceOf(SensitiveDomainBlockedError);
+    }
+
+    const benign = await engine.remember({
+      tier: 'profile',
+      content: 'User prefers dark mode and monospace code editors.',
+      sourceUrl: 'https://docs.example.org/preferences/theme',
+    });
+    expect(benign.id).toBeTruthy();
+  });
+
+  it('respects setClock so recent episodic memories outrank stale ones on equal relevance', async () => {
+    const engine = new HybridMemoryEngine({ storage: new InMemoryStorageBackend() });
+    await engine.init();
+
+    const nowMs = Date.UTC(2026, 10, 26, 12, 0, 0);
+    const dayMs = 86_400_000;
+
+    engine.setClock(nowMs - 95 * dayMs);
+    const oldMem = await engine.remember({
+      tier: 'episodic',
+      content: 'Sprint planning meeting discussed WebGPU kernel tuning and shader caching.',
+      importance: 0.65,
+    });
+
+    engine.setClock(nowMs - 1 * dayMs);
+    const recentMem = await engine.remember({
+      tier: 'episodic',
+      content: 'Sprint planning meeting discussed WebGPU kernel tuning and shader caching.',
+      importance: 0.65,
+    });
+
+    engine.setClock(nowMs);
+    const hits = await engine.recall({
+      query: 'Sprint planning meeting WebGPU kernel tuning',
+      limit: 5,
+    });
+    expect(hits[0]?.record.id).toBe(recentMem.id);
+    expect(hits.some((h) => h.record.id === oldMem.id)).toBe(true);
+  });
 });

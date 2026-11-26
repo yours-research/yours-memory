@@ -21,7 +21,7 @@ import { MemoryError, SensitiveDomainBlockedError } from './errors.js';
 import { planConsolidation } from './lifecycle/consolidator.js';
 import { findContradictions } from './lifecycle/contradiction.js';
 import { findDuplicateRecord } from './lifecycle/dedup.js';
-import { SensitiveDomainFilter } from './privacy/blocklist.js';
+import { checkSensitiveContent, SensitiveDomainFilter } from './privacy/blocklist.js';
 import { decryptPayload, encryptPayload } from './privacy/crypto.js';
 import { assertTaintMutationAllowed, resolveTaintFlag } from './privacy/taint.js';
 import { DeterministicHashEmbedder } from './retrieval/embeddings.js';
@@ -124,6 +124,19 @@ export class HybridMemoryEngine implements MemoryProvider {
   private domainFilter: SensitiveDomainFilter;
   private initPromise: Promise<void> | null = null;
   private initialized = false;
+  private customClock: (() => number) | null = null;
+
+  /**
+   * Override the wall-clock timestamp source used when `nowMs` is omitted
+   * in `remember`, `recall`, `consolidate`, and `exportEncrypted`.
+   */
+  setClock(clock: number | (() => number) | null): void {
+    this.customClock = typeof clock === 'number' ? () => clock : clock;
+  }
+
+  private getNowMs(override?: number): number {
+    return override ?? (this.customClock ? this.customClock() : Date.now());
+  }
 
   constructor(options: HybridMemoryEngineOptions = {}) {
     this.storage = options.storage ?? null;
@@ -221,7 +234,16 @@ export class HybridMemoryEngine implements MemoryProvider {
       );
     }
 
-    const nowMs = options.nowMs ?? Date.now();
+    const contentBlock = checkSensitiveContent(content);
+    if (contentBlock.blocked) {
+      throw new SensitiveDomainBlockedError(
+        input.sourceUrl ?? 'memory://content-policy',
+        contentBlock.rule ?? 'content:sensitive',
+        contentBlock.reason ?? 'Sensitive content excluded from automatic memory capture'
+      );
+    }
+
+    const nowMs = this.getNowMs(options.nowMs);
     const incomingTainted = resolveTaintFlag(input);
     const normalizedInput: MemoryRecordInput = {
       ...input,
@@ -345,7 +367,7 @@ export class HybridMemoryEngine implements MemoryProvider {
     const qText = query.query.trim();
     if (!qText) return [];
 
-    const nowMs = query.nowMs ?? Date.now();
+    const nowMs = this.getNowMs(query.nowMs);
     const limit = Math.max(1, query.limit ?? 10);
     const minScore = query.minScore ?? 0;
     const candidateLimit = Math.max(limit * 4, 32);
@@ -454,7 +476,7 @@ export class HybridMemoryEngine implements MemoryProvider {
           targetId: summaryRecord.id,
           relation: 'derived_from',
           weight: 0.9,
-          createdAt: Date.now(),
+          createdAt: this.getNowMs(),
         });
       }
     }
@@ -521,7 +543,7 @@ export class HybridMemoryEngine implements MemoryProvider {
 
     const envelope: ExportEnvelopeV1 = {
       format: 'yours-memory-export-v1',
-      exportedAt: Date.now(),
+      exportedAt: this.getNowMs(),
       records,
       edges,
       blockedRules: blockedRules.filter((r) => !r.builtin),
